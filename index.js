@@ -13,6 +13,7 @@ const { useCloudflareR2AuthState } = require('./r2-auth-store')
 // const fs = require('fs').promises
 const Boom = require('@hapi/boom')
 const P = require('pino')
+const jwt = require('jsonwebtoken')
 
 const app = express()
 const port = 10000
@@ -25,7 +26,28 @@ let isConnected = false
 
 const delay = ms => new Promise(res => setTimeout(res, ms))
 
-app.get('/qr', async (req, res) => {
+function authenticateJWT(req, res, next) {
+  const authHeader = req.headers.authorization
+  const token = authHeader && authHeader.split(' ')[1]
+
+  if (!token) {
+    return res.sendStatus(401) // Unauthorized
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, sub) => {
+    if (err) {
+      return res.sendStatus(403) // Forbidden
+    }
+    req.sub = sub // attach decoded payload
+    next()
+  })
+}
+
+app.get('/health', async (req, res) => {
+  res.send('UP')
+})
+
+app.get('/qr', authenticateJWT, async (req, res) => {
   if (isConnected) {
     return res.send('<h2>✅ Already connected to WhatsApp!</h2>')
   }
@@ -44,7 +66,7 @@ app.get('/qr', async (req, res) => {
 })
 
 // Send message to group
-app.post('/send', async (req, res) => {
+app.post('/send', authenticateJWT, async (req, res) => {
   if (!isConnected || !sock) {
     // return res.status(400).json({ error: 'Not connected to WhatsApp' })
     await startWhatsApp()
