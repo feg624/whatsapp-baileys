@@ -19,6 +19,7 @@ const app = express()
 const port = 10000
 
 app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
 
 let sock = null
 let qrImageData = '' // holds the base64 QR code
@@ -45,6 +46,17 @@ function authenticateJWT(req, res, next) {
 
 app.get('/health', async (req, res) => {
   res.send('UP')
+})
+
+app.post('/generate-jwt', async (req, res) => {
+  const { secret, sub, exp } = req.body;
+
+  jwt.sign({ sub }, secret, { expiresIn: exp }, (err, token) => {
+    if (err) {
+      return res.status(500).json({ error: 'Failed to generate token', details: err.message })
+    }
+    res.json({ token })
+  })
 })
 
 app.get('/qr', authenticateJWT, async (req, res) => {
