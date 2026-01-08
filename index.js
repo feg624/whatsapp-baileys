@@ -3,6 +3,11 @@ require('dotenv').config()
 const express = require('express')
 const qrcode = require('qrcode')
 const bodyParser = require('body-parser')
+
+const passport = require('passport')
+const GoogleStrategy = require('passport-google-oauth').OAuth2Strategy
+const session = require('express-session');
+
 const {
   default: makeWASocket,
   fetchLatestBaileysVersion,
@@ -20,6 +25,67 @@ const port = 10000
 
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({ extended: true }))
+
+app.use(session({
+  secret: 'your_secret_key',
+  resave: false,
+  saveUninitialized: false
+}));
+app.use(passport.initialize())
+app.use(passport.session())
+
+const emails = ['francoguidoli@gmail.com']
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: `${process.env.BASE_URL}/auth/google/callback`,
+  },
+  function(accessToken, refreshToken, profile, done) {
+    if (!emails.includes(profile.emails[0].value)) {
+      return done(Boom.unauthorized('Email not authorized'));
+    }
+    return done(null, profile);
+  }
+));
+
+passport.serializeUser(function(user, done) {
+  done(null, user);
+});
+
+passport.deserializeUser(function(obj, done) {
+  done(null, obj);
+});
+
+// Start the OAuth flow
+app.get('/auth/google',
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    prompt: 'select_account'
+  })
+)
+
+app.get('/logout', (req, res, next) => {
+  req.logout((err) => {
+    if (err) return next(err);
+
+    req.session.destroy((err) => {
+      if (err) return next(err);
+
+      res.clearCookie('connect.sid'); 
+
+      res.redirect('/'); 
+    });
+  });
+})
+
+// Google redirects here after user logs in
+app.get('/auth/google/callback', 
+  passport.authenticate('google', { failureRedirect: '/login' }),
+  (req, res) => {
+    res.redirect('/'); // Successful login
+  }
+)
 
 let sock = null
 let qrImageData = '' // holds the base64 QR code
@@ -44,6 +110,18 @@ function authenticateJWT(req, res, next) {
   })
 }
 
+const checkAuth = (req, res, next) => {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+
+  res.redirect('/auth/google');
+};
+
+app.get('/', checkAuth, async (req, res) => {
+  res.send('<h2>WhatsApp Baileys API is running!</h2><p>Use /generate-jwt to create a JWT token and access protected routes.</p>')
+})
+
 app.get('/health', async (req, res) => {
   res.send('UP')
 })
@@ -59,7 +137,7 @@ app.post('/generate-jwt', async (req, res) => {
   })
 })
 
-app.get('/qr', authenticateJWT, async (req, res) => {
+app.get('/qr', checkAuth, async (req, res) => {
   if (isConnected) {
     return res.send('<h2>✅ Already connected to WhatsApp!</h2>')
   }
